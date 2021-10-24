@@ -1,0 +1,165 @@
+---
+title: Analysis of Ft Riley white-tailed deer surveys
+description: |
+  Analysis of a single year, highlighting some potential challenges.
+author:
+  - name: Rexstad
+    url: 
+    affiliation: CREEM, Univ St Andrews
+    affiliation_url: https://www.creem.st-andrews.ac.uk/
+date: "`r Sys.Date()`"
+output: 
+  distill::distill_article:
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+solution <- FALSE
+```
+
+```{r packages}
+library(readxl)
+library(Distance)
+library(circular)
+library(knitr)
+library(plotrix)
+```
+
+# Acquire data
+
+Analyse a single year of white-tailed deer spotlight survey data.  Because each year's survey is stored in a separate sheet of the spreadsheet, we can select what year we wish to analyse.  The code below has selected the most recent year.  We will talk about the earlier years later.
+
+
+```{r dataread}
+spreadsheet.file <- "FortRileyDeerDistanceRData.xlsx"
+year <- 2020
+unit.dat <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+```
+
+#  Data organisation
+
+We will do some organisation of the data, introducing an Area field, transforming radial distance and angle to perpendicular distances and establishing the units of measure for the perpendicular distances, the transect lengths and the units with which density estimates will be reported.
+
+```{r organise}
+unit.dat$Region.Label <- unit.dat$Unit
+unit.dat$Area <- 1  #  produces density per sqkm
+deg2rad <- function(deg) {(deg * pi) / (180)}
+unit.dat$distance <- abs(unit.dat$radial * sin(deg2rad(unit.dat$Angle)))
+riley.units <- convert_units("meter", "mile", "square kilometer")
+```
+
+
+# Exploratory data analysis
+
+There is a total of `r sum(!is.na(unit.dat$distance))` detections.  As it is distance sampling, attention first focuses upon the distribution of the perpendicular distances.  Note the `nc` argument will produce quite fine scale resolution of the histogram bars.
+
+```{r explore, eval=solution}
+hist(unit.dat$distance, nc=40, xlab="Perpendicular distance (m)", main=paste("All ", year, "detections"))
+```
+
+<div class="warning" style='padding:0.1em; background-color:#b0c6f5; color:#000000'>
+<span>
+<p style='margin-top:1em; text-align:left'>
+<b>Closer scrutiny of 2020 data</b></p>
+<p style='margin-left:1em;'>
+If you chose to examine the 2020 data, you will notice a difficulty in the histogram of perpendicular distances.
+
+There is an apparent small spike at small distances.  Further investigation suggests this spike comes from potential rounding of bearings to zero.
+</p>
+</span>
+</div>
+
+```{r detectionbearings, eval=solution}
+plot.circular(unit.dat$Angle, stack=TRUE, main="Detection angles", units = "degrees")
+```
+
+What are the implications of this field procedure to our density estimates?
+
+# Model fitting without truncation
+
+We will use a single type of adjustment term, the cosine.  Feel free to use other types of adjustment terms, but you will find there is no difference in the fit of models with different types of adjustments.
+
+
+```{r untrunc, eval=solution}
+unic <- ds(unit.dat, transect="line", key="unif", adjustment = "cos", 
+           convert.units = riley.units)
+hnc <- ds(unit.dat, transect="line", key="hn", adjustment = "cos", 
+          convert.units = riley.units)
+hrc <- ds(unit.dat, transect="line", key="hr", adjustment = "cos", 
+          convert.units = riley.units)
+```
+
+## Assess model fit
+
+Use the function `gof_ds()` to assess fit.  Note, by default, with exact distance data you will not be provided with a $\chi^2$ goodness of fit test, just the Cramer-von Mises test.  The Kolomogorov-Smirnov test is also not provided by default because it uses a bootstrap procedure that is quite slow.
+
+```{r gof, eval=solution}
+par(mfrow=c(1,3))
+gof_ds(unic)
+gof_ds(hnc)
+gof_ds(hrc)
+par(mfrow=c(1,1))
+```
+
+With absolute measure of fit determined, also assess relative fit of competing models.
+
+```{r aic, eval=solution}
+AIC(unic, hnc, hrc)
+```
+
+Both the relative and absolute measures of fit can be produced in a single table using `summarize_ds_models()`.
+
+```{r combineboth, eval=solution}
+kable(summarize_ds_models(unic, hnc, hrc)[ ,2:7], row.names = FALSE, digits=4)
+```
+
+Examine the plot of the selected detection function to the data.
+
+```{r badmodel, fig.cap="Hazard rate detection function fitted without truncation.",  fig.width=5, eval=solution}
+plot(hrc, nc=40)
+```
+
+### Examine the summary of the detection function from the selected model.
+
+```{r awfulddf, eval=solution}
+summary(hrc$ddf)
+```
+
+### Examine the summary of the density estimates from the selected model.
+
+```{r awfuldht, eval=solution}
+hrc$dht
+```
+
+Be sure you understand all the elements presented in the output.
+
+# Questions
+
+- Assess the plausibility of the detection function
+
+- Does the estimate of white-tail density seem biologically realistic?
+
+<div class="warning" style='padding:0.1em; background-color:#b0c6f5; color:#000000'>
+<span>
+<p style='margin-top:1em; text-align:left'>
+<b>Off to a rough start</b></p>
+<p style='margin-left:1em;'>
+Clearly analysis of distance sampling data is not as simple as press the run button and write down the answer produced by the computer.  We will have to work harder and smarter to produce credible analyses of our data.
+</p>
+</span>
+</div>
+
+
+The perils of a spike at 0 coupled with dubious use of the hazard rate key function, coupled with no truncation, coupled with unquestioned use of model selection tools; result in unreasonable model fits.
+
+
+This model has the lowest AIC and a goodness of fit statistic that passes the threshold.  What does it suggest?
+
+- Probability of detecting a deer 30m from the transect is 0.5.  Between 50m and 200m detectability is constant at ~0.3.
+- Estimated deer density from this model is 13.5 deer per km^2.
+
+
+

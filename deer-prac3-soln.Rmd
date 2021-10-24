@@ -1,0 +1,254 @@
+---
+title: Analysis of Ft Riley white-tailed deer surveys
+description: |
+  Analyses for all surveys combined, yet producing year-specific density estimates.
+author:
+  - name: Rexstad
+    url: 
+    affiliation: CREEM, Univ St Andrews
+    affiliation_url: https://www.creem.st-andrews.ac.uk/
+date: "`r Sys.Date()`"
+output: 
+  distill::distill_article:
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+solution <- TRUE
+```
+
+Load required packages.
+
+```{r packages}
+library(readxl)
+library(Distance)
+library(knitr)
+library(plotrix)
+```
+
+# Acquire data
+```{r dataread}
+spreadsheet.file <- "FortRileyDeerDistanceRData.xlsx"
+year <- 2020
+unit.dat <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+```
+
+#  Data organisation
+
+```{r organise}
+unit.dat$Region.Label <- unit.dat$Unit
+unit.dat$Area <- 1  #  produces density per sqkm
+deg2rad <- function(deg) {(deg * pi) / (180)}
+unit.dat$distance <- abs(unit.dat$radial * sin(deg2rad(unit.dat$Angle)))
+riley.units <- convert_units("meter", "mile", "square kilometer")
+```
+
+---
+
+# Analysing all surveys together
+
+Now for something new.  Create a loop to read all years of white-tail survey data and combine them together (with `rbind`) to create a single data set.  While merging the data, plot a histogram of each year's perpendicular detection distances.
+
+```{r histloop, layout="l-screen", fig.height=10, fig.width=18}
+par(mfrow=c(7,2),mai=c(0.4,0.3,0.1,0))
+masterdeer <- data.frame()
+for (year in seq(2007, 2020, 1)) {
+  forhist <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+  forhist$distance <- abs(forhist$radial * sin(deg2rad(forhist$Angle)))
+  forhist$year <- year
+  numdets <- sum(!is.na(forhist$distance))
+  numtrans <- length(unique(forhist$Sample.Label))
+  hist(forhist$distance, nc=40, xlab="Perpendicular distance (m)", xlim=c(0, 550),
+       main=paste(year, "detections, total=", numdets, "number transects=", numtrans))
+  masterdeer <- rbind(masterdeer, forhist)
+}
+par(mfrow=c(1,1))
+```
+
+Also examine the distribution of detection distances when all years are pooled.
+
+```{r allyears, fig.cap="Detection distances of white-tails, all years combined."}
+hist(masterdeer$distance, nc=100)
+```
+
+# Model all years with year as stratum
+
+
+This eases the analysis but skips more fine-grained assessment of each survey.  In particular, this analysis will apply a single truncation distance to all years' data, based upon the distribution of the distances pooled across all surveys.  Additionally, survey protocol changed slightly since it was initiated.  Some modification of the data prior to a combined analysis is required.
+
+There are two transects, 17 and 13 miles in length.  In the period 2007-2016, the transects were driven twice; 2017-2020 they were driven once.  For the early period, both `Sample.Label` was changed to indicate the two visits **and** the transect length was doubled.  In effect, the effort was adjusted twice, (resulting effort was calculated as 120 rather than 60 in the Distance package).  Code below undoes the double adjustment for surveys occurring 2007-2016 by renaming the second `Sample.Label` to match the first (they are the same transect).
+
+Note also that the `Region.Label` field, used to indicate strata, has been reassigned.  The software now believes that each year represents a separate stratum. When we print estimates from our fitted model, we will see stratum-specific estimates; which translates to year-specific estimates.
+
+```{r dataprep, eval=solution}
+masterdeer$Region.Label <- masterdeer$year
+masterdeer$Area <- 1
+masterdeer$object <- NULL
+masterdeer$observer <- NULL
+masterdeer$detected <- NULL
+masterdeer$detect <- NULL
+masterdeer$Sample.Label <- gsub("E2", "E1", masterdeer$Sample.Label)
+masterdeer$Sample.Label <- gsub("W2", "W1", masterdeer$Sample.Label)
+```
+
+
+With the recoding completed, we fit models for both the half normal and hazard rate key functions.  One model hypothesizes a single detection function for all years (`pool`).  The alternative model hypothesizes the detection function changes each year, but a common key function applies for all years.  (A third option would be to analyse each year individually, breaking it out from the combined data set; I've not explored that here.)
+
+```{r allyear, eval=solution}
+all.hn.cov <- ds(masterdeer, key="hn", adj="cos", truncation="5%", convert.units = riley.units,
+                 formula=~as.factor(Region.Label))
+all.hn.pool <- ds(masterdeer, key="hn", adj="cos", truncation="5%", convert.units = riley.units)
+all.hr.cov <- ds(masterdeer, key="hr", adj="cos", truncation="5%", convert.units = riley.units,
+                 formula=~as.factor(Region.Label))
+all.hr.pool <- ds(masterdeer, key="hr", adj="cos", truncation="5%", convert.units = riley.units)
+kable(summarize_ds_models(all.hn.cov, all.hn.pool, all.hr.cov, all.hr.pool)[ ,2:7],
+      row.names = FALSE, digits=4)
+```
+
+
+
+<!--
+## Comparing encounter rate variance computation
+
+```{r encratvar, echo=FALSE, eval=FALSE}
+
+# experiment with er.method argument
+#  see https://github.com/DistanceDevelopment/mrds/issues/38
+all.hr.pool.er <- ds(masterdeer, key="hr", adj="cos", truncation="5%", convert.units = riley.units,
+                     er.method=1)
+allout.er <- dht2(all.hr.pool, flatfile=masterdeer, strat_formula = ~Region.Label, 
+               convert_units = riley.units, stratification = "replicate", innes = FALSE)
+
+
+allout <- dht2(all.hr.pool, flatfile=masterdeer, strat_formula = ~Region.Label, 
+               convert_units = riley.units, stratification = "replicate")
+innesmeth <- all.hr.pool$dht$individuals$D
+plotCI(2007:2020, innesmeth$Estimate[1:14], li = innesmeth$lcl, ui=innesmeth$ucl,
+       main="Comparison of CIs with different enc rate var",
+       xlab="Year", ylab="Deer density (per sq km)", ylim=c(0,30))
+bucklandmeth <- all.hr.pool.er$dht$individuals$D
+plotCI(2007:2020+.2, bucklandmeth$Estimate[1:14], li = bucklandmeth$lcl, ui=bucklandmeth$ucl,
+       main="Comparison of CIs with different enc rate var",
+       xlab="Year", ylab="Deer density (per sq km)", col="blue", add=TRUE)
+legend("topleft", legend=c("Innes", "Buckland"), col=c("black", "blue"),
+       lwd=2, lty=1, cex=.7)
+
+```
+-->
+
+## Annual estimates
+
+Estimates of yearly white-tail density can be produced from the preferred model--the hazard rate key function where all years share the same detection function.  Results shown both in tabular and graphical form.
+
+```{r annualtable, eval=solution}
+esttable <- all.hr.pool$dht$individuals$D[1:14, 1:6]
+kable(esttable, row.names=FALSE, digits=4, 
+      caption="Annual estimates of density of individuals from hazard rate with pooled detection function.")
+```
+
+```{asis, echo=solution}
+# Observations
+
+Anomalies
+
+- 2012
+  - encounter rate CV vanishingly small, resulting in minute confidence interval width
+  - East 53/34=`r round(53/34,3)`, West 38/26=`r round(38/26,3)`
+- 2009
+  - similarly small CV(ER) and small CI width for density estimates
+  - East 52/34=`r round(52/34,3)`, West 36/26=`r round(36/26,3)`
+- 2018
+  - upper CB for density being >200.  
+    - single detection in that year of a group of size 10
+    - CV(ER) for groups is the highest in the series (53/17=`r round(53/17,3)` groups on East, 19/13=`r round(19/13, 3)` on West transect)
+- 2014 and 2020
+  - quite large CV(ER) creating large CI widths for density estimates
+  - 2014 (East 57/34=`r round(57/34,3)`, West 24/26=`r round(24/26,3)`)
+  - 2020 (East 44/17=`r round(44/17,3)`, West 25/13=`r round(25/13,3)`)
+- 2017 and 2018
+  - effort halves (from 60 to 30) but number of groups detected barely changes, leading to the two years with highest group encounter rates (and encounter rate of individuals nearly double other years).  Result is largest estimates of individual density
+  
+Demonstrates the perils of small numbers of replicate transects.  The estimate of variability is unreliable.
+
+This finding supports the idea that the detection function does not change over time (according to AIC) and the hazard rate has more support than the half normal.  Goodness of fit P-value is slightly below 0.05, but with 1200 detections the test has plenty of power.  Satisfied that inference can be made from the model.
+```
+
+```{r annualplot, fig.cap="Annual estimates of density of individuals from hazard rate with pooled detection function.", layout="l-body-outset", eval=solution}
+plotCI((2007:2020), esttable$Estimate, li=esttable$lcl, ui=esttable$ucl, ylim=c(0,20), xlab="Year",
+       main="Density of individuals\npooled detection function", ylab="Density per sq mi")
+```
+
+## Plot of difference between year-specific estimates from the hazard rate models
+
+What if we chose to use the model with year-specific detection functions?  Would our insight about dynamics of white-tails have been substantially different?
+
+```{r, fig.cap="Differences in year-specific density estimates.", layout="l-body-outset", eval=solution}
+pooled <- all.hr.pool$dht$individuals$D[1:14,]
+separate <- all.hr.cov$dht$individuals$D[1:14,]
+plotCI(x = as.numeric(separate$Label), y=separate$Estimate, li = separate$lcl, 
+       ui=separate$ucl, ylim=c(0,25), 
+       main="Density estimates Ft Riley spotlight surveys", xlab="Year",
+       ylab="Deer density (number per sq kilometer)",
+       sub="deltaAIC for year separate 13")
+plotCI(x = as.numeric(pooled$Label)+.2, y=pooled$Estimate, 
+       li = pooled$lcl, ui=pooled$ucl, add=TRUE, scol="blue", pt.bg="blue")
+legend("topleft", legend=c("Year-specific", "Pooled"), title="Detection function",
+       lwd=2, lty=1, col=c("black", "blue"), cex=.7)
+```
+
+Why is there so little difference in density estimates when the $\Delta$AIC score was something like 13 AIC units?  Examine the plot of year-specific detection functions.
+
+```{r stratspecplot, fig.cap="Stratum covariate in hazard rate key function.", layout="l-body-outset", fig.width=8, eval=solution}
+plot(all.hr.cov, breaks=seq(0, 270,5), showpoints=FALSE)
+for (i in 2007:2020) {
+  add_df_covar_line(all.hr.cov, data=data.frame(Region.Label=i), col=i-2006, lty=1)
+}
+legend("topright", legend=2007:2020, title="Year", col = (2007:2020)-2006, lty=1, lwd=2, cex=.7)
+```
+
+```{asis, echo=solution}
+The plot of year-specific detection functions support the idea that estimates of density coming from a model of year-specific detectability will differ only slightly from estimates from a model that assumes detectability is constant across years.
+```
+
+```{asis, echo=solution}
+# Supplement: Reconcile CIs of 2020 only with 2020 with other years
+
+In the first deer practical, we analysed the 2020 survey as if it existed in isolation.  The point estimate derived from that analysis, and from the analysis of all years combined did not differ greatly, but the precision (confidence intervals) of the two estimates was substantially different.  What is the reason for this?
+
+All boils down to truncation distance.  When truncating 5% of only the 2020 data, truncation distance is 309m and 65 detections are included in the analysis.  When 5% truncation is applied to the data pooled over all years, the truncation distance is shorter, 269m; with only 57 detections meeting that criterion.
+
+The CV of encounter rate for the 2020 data with the more severe truncation (combined with other years) is almost triple the CV of encounter rate for the 2020 data treated alone.  The consequence of this is to make the Sattherthwaite degrees of freedom used in confidence interval calculations really small (1.4(pooled) vs 12.7(only 2020)).  This has the effect of ballooning the $t$-statistic with particularly dramatic consequences for the upper confidence bound.  Supporting calculations below.
+```
+
+```{r sattherthwaite, eval=solution, echo=solution}
+cv <- vector("numeric", 3)
+df <- vector("numeric", 3)
+
+cv <- c(.2702, .0983, .0670)
+df <- c(1, 56, 56)
+
+cv.dhat.just <- .2952 #just by year
+dhat.just <- 5.3571
+df.dhat.just <- cv.dhat.just^4/sum(cv^4/df)
+bigc <- exp((abs(qt(0.025, df.dhat.just)) * sqrt(log(1+cv.dhat.just^2))))
+low.just <- dhat.just/bigc
+high.just <- dhat.just * bigc
+
+cv <- c(.1091,.1693,.0614)
+df <- c(1, 64, 65)
+cv.dhat.only <- .2105
+dhat.only <- 6.0884
+df.dhat.only <- cv.dhat.only^4/sum(cv^4/df)
+bigc <- exp((abs(qt(0.025, df.dhat.only)) * sqrt(log(1+cv.dhat.only^2))))
+low.only <- dhat.only/bigc
+high.only <- dhat.only * bigc
+outtable <- data.frame(df=c(df.dhat.only, df.dhat.just),
+                       lcb=c(low.only, low.just),
+                       ucb=c(high.only, high.just),
+                       row.names = c("2020 with other years", "2020 analysed alone"))
+kable(outtable, digits=3, caption="Sattherthwaite degrees of freedom impact on confidence interval bounds")
+
+```

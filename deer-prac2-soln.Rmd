@@ -1,0 +1,166 @@
+---
+title: Analysis of Ft Riley white-tailed deer surveys
+description: |
+  Analysis of a single year, highlighting some potential challenges.
+author:
+  - name: Rexstad
+    url: 
+    affiliation: CREEM, Univ St Andrews
+    affiliation_url: https://www.creem.st-andrews.ac.uk/
+date: "`r Sys.Date()`"
+output: 
+  distill::distill_article:
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+solution <- TRUE
+```
+
+Load the packages we will be using:
+
+- `readxl` for the spreadsheet
+- `Distance` for the distance sampling analysis
+- `knitr` for pretty tables
+- `emo` for some fun
+
+```{r packages}
+library(readxl)
+library(Distance)
+library(knitr)
+library(emo)
+```
+
+# Acquire data
+
+Analyse a single year of white-tailed deer spotlight survey data.  Because each year's survey is stored in a separate sheet of the spreadsheet, we can select what year we wish to analyse.  The code below has selected the most recent year.
+
+```{r dataread}
+spreadsheet.file <- "FortRileyDeerDistanceRData.xlsx"
+year <- 2020
+unit.dat <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+```
+
+#  Data organisation
+
+We will do some organisation of the data, introducing an Area field, transforming radial distance and angle to perpendicular distances and establishing the units of measure for the perpendicular distances, the transect lengths and the units with which density estimates will be reported.
+
+```{r organise}
+unit.dat$Region.Label <- unit.dat$Unit
+unit.dat$Area <- 1  #  produces density per sqkm
+deg2rad <- function(deg) {(deg * pi) / (180)}
+unit.dat$distance <- abs(unit.dat$radial * sin(deg2rad(unit.dat$Angle)))
+riley.units <- convert_units("meter", "mile", "square kilometer")
+```
+
+---
+
+# Remedy for unreasonable density estimates
+
+As we saw earlier, a "default" analysis of the 2020 data selected the hazard rate detection function.  Even though this model had adequate fit to the data, the rate of decline in predicted detectability did not seem plausible.  Consequently the predicted deer density was large (roughly double the density of other years).
+
+<aside>
+```{r bad, echo=FALSE}
+hrc <- ds(unit.dat, transect="line", key="hr", adjustment = "cos", 
+          convert.units = riley.units)
+plot(hrc, nc=40)
+```
+
+</aside>
+
+Do we give up? `r ji("loudly crying face")`  No, the cause is the spike at 0 distance (see earlier practical).  We wish to decrease the influence of that spike.  One option is to truncate some of the most distance detections.
+
+```{r trunc, eval=solution}
+mytrunc <- "5%"
+unict <- ds(unit.dat, transect="line", key="unif", adjustment = "cos", 
+               convert.units = riley.units, truncation = mytrunc)
+hnct <- ds(unit.dat, transect="line", key="hn", adjustment = "cos", 
+              convert.units = riley.units, truncation = mytrunc)
+hrct <- ds(unit.dat, transect="line", key="hr", adjustment = "cos", 
+              convert.units = riley.units, truncation = mytrunc)
+kable(summarize_ds_models(unict, hnct, hrct)[ ,2:7], row.names=FALSE, digits=4)
+```
+
+
+
+Applying a small amount of truncation results in much greater uniformity in $\widehat{P_a}$ and consequently greater uniformity in estimated density.  The consequences of the model selection decision is much less severe.  Model selection metrics are very similar for the three models, but so too are the density estimates.  Incorporating model selection uncertainty in this analysis would not produce estimates different from what is presented here.
+
+```{r out4, eval=solution}
+three.ests <- rbind(hnct$dht$individuals$D,
+                    unict$dht$individuals$D,
+                    hrct$dht$individuals$D)
+three.ests$Label <- c("Half normal", "Uniform", "Hazard rate")
+kable(three.ests[ ,-7 ], digits=4, row.names=FALSE, 
+      caption="Density estimates (in order of AIC score) with 5% truncation.")
+```
+
+
+# If 5% truncation was good, would 10% truncation be better?
+
+Reasonable question, let's see:
+
+```{r trunc2, eval=solution}
+mytrunc <- "10%"
+unict2 <- ds(unit.dat, transect="line", key="unif", adjustment = "cos", 
+               convert.units = riley.units, truncation = mytrunc)
+hnct2 <- ds(unit.dat, transect="line", key="hn", adjustment = "cos", 
+              convert.units = riley.units, truncation = mytrunc)
+hrct2 <- ds(unit.dat, transect="line", key="hr", adjustment = "cos", 
+              convert.units = riley.units, truncation = mytrunc)
+kable(summarize_ds_models(unict2, hnct2, hrct2)[ ,2:7], row.names=FALSE, digits=4)
+```
+
+and the density estimates?
+
+```{r output2, eval=solution}
+three.ests <- rbind(unict2$dht$individuals$D,
+                    hrct2$dht$individuals$D,
+                    hnct2$dht$individuals$D)
+three.ests$Label <- c("Uniform", "Hazard rate", "Half normal")
+kable(three.ests[ ,-7 ], digits=4, row.names=FALSE, 
+      caption="Density estimates (in order of AIC score) with 10% truncation.")
+```
+
+Density estimates from the hazard rate model are roughly the same at 6.6; half normal model estimates are relatively unchanged at 6.1; the uniform cosine moves from 5.7 to 5.0 (a 13% drop).  Relative to the precision with which density is estimated, the changes are well within the confidence intervals.
+
+<div class="warning" style='padding:0.1em; background-color:#b0c6f5; color:#000000'>
+<span>
+<p style='margin-top:1em; text-align:left'>
+<b>Questions</b></p>
+<p style='margin-left:1em;'>
+<ul>
+<li>Comment on the consistency in estimates of $\widehat{P_a}$ and consequently $\hat{D}$ with and without truncation.
+<li>If 5% truncation improved the analysis, would more truncation improve the situation further?
+</ul>
+</p>
+</span>
+</div>
+
+# Postscript: Just for practice
+
+## Assess the fit of the selected model
+
+Look for sources of poor fit in the model with the lowest AIC score
+
+```{r gof, eval=solution}
+gof_ds(hnct)
+```
+
+## Study the model results 
+
+The fit of the selected model seems adequate.  Do we see any anomalies in the visualisation or the output?
+
+```{r output, eval=solution}
+plot(hnct, nc=20, main="2020 white-tail survey,\nhalf normal cosine")
+```
+
+```{r out2, eval=solution}
+summary(hnct$ddf)
+```
+
+```{r out3, eval=solution}
+hnct$dht
+```
