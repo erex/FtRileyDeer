@@ -142,6 +142,8 @@ Be sure you understand all the elements presented in the output.
 
 - Does the estimate of white-tail density seem biologically realistic?
 
+
+```{asis, echo=solution}
 <div class="warning" style='padding:0.1em; background-color:#b0c6f5; color:#000000'>
 <span>
 <p style='margin-top:1em; text-align:left'>
@@ -152,14 +154,12 @@ Clearly analysis of distance sampling data is not as simple as press the run but
 </span>
 </div>
 
-
 The perils of a spike at 0 coupled with dubious use of the hazard rate key function, coupled with no truncation, coupled with unquestioned use of model selection tools; result in unreasonable model fits.
-
 
 This model has the lowest AIC and a goodness of fit statistic that passes the threshold.  What does it suggest?
 
 - Probability of detecting a deer 30m from the transect is 0.5.  Between 50m and 200m detectability is constant at ~0.3.
 - Estimated deer density from this model is 13.5 deer per km^2.
-
+```
 
 
