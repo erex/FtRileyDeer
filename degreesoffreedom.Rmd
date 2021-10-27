@@ -1,0 +1,75 @@
+---
+title: Analysis of Ft Riley white-tailed deer surveys
+description: |
+  Why the disparity in confidence interval width between analysis that treats 2020 survey in isolation and analysis that includes 2020 in a model that uses all years' data to produce year-specific density estimates?
+author:
+  - name: Rexstad
+    url: 
+    affiliation: CREEM, Univ St Andrews
+    affiliation_url: https://www.creem.st-andrews.ac.uk/
+date: "`r Sys.Date()`"
+output: 
+  distill::distill_article:
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+```
+
+# Supplement: Reconcile CIs of 2020 only with 2020 with other years
+
+In the first deer practical, we analysed the 2020 survey as if it existed in isolation.  The point estimate derived from that analysis, and from the analysis of all years combined did not differ greatly, but the precision (confidence intervals) of the two estimates was substantially different.  What is the reason for this?
+
+All boils down to truncation distance.  When truncating 5% of only the 2020 data, truncation distance is 309m and 65 detections are included in the analysis.  When 5% truncation is applied to the data pooled over all years, the truncation distance is shorter, 269m; with only 57 detections meeting that criterion.
+
+Confidence intervals in `Distance` are 
+
+- asymmetrical (based upon an distributional assumption of log-normal sampling distribution) and
+- computed using degrees of freedom with the Sattherthwaite adjustment (see Buckland et al. (2001) Section 3.6.1)
+
+$$
+d f=\frac{[\operatorname{cv}(\hat{D})]^{4}}{\sum_{i=1}^{q} \frac{\left[\mathrm{cv}_{i}\right]^{4}}{d f_{i}}}=\frac{\left[\sum_{i=1}^{q}\left[\mathrm{cv}_{i}\right]^{2}\right]^{2}}{\sum_{i=1}^{q} \frac{\left[\mathrm{cv}_{i}\right]^{4}}{d f_{i}}}
+$$
+
+Pull apart the estimation from the model `hnct` fitted in Practical 2 with the model `all.hr.pool` fitted in Practical 3, focusing our attention on this Sattherthwaite calculation.
+
+
+```{r sattherthwaite}
+cv <- vector("numeric", 3)
+df <- vector("numeric", 3)
+
+# uncertainty calculation for 2020 from analysis with all years
+#    This is model all.hr.pool
+cv <- c(0.0279848, 0.20757576, 0.0625997)   # p, er, sbar
+df <- c(56, 1, 56)  # 57 detects, w=269
+
+cv.dhat.just <- 0.20945368   #  .2952 
+dhat.just <- 5.156383   # 5.3571
+df.dhat.just <- cv.dhat.just^4/sum(cv^4/df)
+bigc <- exp((abs(qt(0.025, df.dhat.just)) * sqrt(log(1+cv.dhat.just^2))))
+low.just <- dhat.just/bigc
+high.just <- dhat.just * bigc
+
+# uncertainty calculation for 2020 with that year analysed alone
+#  This is model hnct from Prac2
+cv <- c(0.1705737, 0.03171521, 0.06171404)   # p, er, sbar
+df <- c(64, 1, 65)  # 65 detects, w=309
+cv.dhat.only <- 0.1734971
+dhat.only <- 6.148632
+df.dhat.only <- cv.dhat.only^4/sum(cv^4/df)
+bigc <- exp((abs(qt(0.025, df.dhat.only)) * sqrt(log(1+cv.dhat.only^2))))
+low.only <- dhat.only/bigc
+high.only <- dhat.only * bigc
+outtable <- data.frame(df=c(df.dhat.only, df.dhat.just),
+                       lcb=c(low.only, low.just),
+                       ucb=c(high.only, high.just),
+                       row.names = c("2020 analysed alone", "2020 with other years"))
+kable(outtable, digits=3, caption="Sattherthwaite degrees of freedom impact on confidence interval bounds")
+```
+
+
+The CV of encounter rate for the 2020 data with the more severe truncation (combined with other years) is almost triple the CV of encounter rate for the 2020 data treated alone.  The consequence of this is to make the Sattherthwaite degrees of freedom used in confidence interval calculations really small (1.4(pooled) vs 12.7(only 2020)).  This has the effect of ballooning the $t$-statistic with particularly dramatic consequences for the upper confidence bound.  Supporting calculations below.
