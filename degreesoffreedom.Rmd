@@ -18,13 +18,66 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(knitr)
+library(kableExtra)
+library(readxl)
+library(Distance)
+```
+
+```{r getdata, echo=FALSE}
+spreadsheet.file <- "FortRileyDeerDistanceRData.xlsx"
+year <- 2020
+unit.dat <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+unit.dat$Region.Label <- unit.dat$Unit
+unit.dat$Area <- 1  #  produces density per sqkm
+deg2rad <- function(deg) {(deg * pi) / (180)}
+unit.dat$distance <- abs(unit.dat$radial * sin(deg2rad(unit.dat$Angle)))
+riley.units <- convert_units("meter", "mile", "square kilometer")
+```
+
+```{r singleyearrun, echo=FALSE}
+hnct <- ds(unit.dat, transect="line", key="hn", adjustment = "cos", 
+              convert.units = riley.units, truncation = "5%")
+```
+
+```{r pooledrun, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+masterdeer <- data.frame()
+for (year in seq(2007, 2020, 1)) {
+  forhist <- as.data.frame(read_xlsx(path=spreadsheet.file, sheet=as.character(year)))
+  forhist$distance <- abs(forhist$radial * sin(deg2rad(forhist$Angle)))
+  forhist$year <- year
+  masterdeer <- rbind(masterdeer, forhist)
+}
+masterdeer$Region.Label <- masterdeer$year
+masterdeer$Area <- 1
+masterdeer$object <- NULL
+masterdeer$observer <- NULL
+masterdeer$detected <- NULL
+masterdeer$detect <- NULL
+masterdeer$Sample.Label <- gsub("E2", "E1", masterdeer$Sample.Label)
+masterdeer$Sample.Label <- gsub("W2", "W1", masterdeer$Sample.Label)
+all.hr.pool <- ds(masterdeer, key="hr", adj="cos", truncation="5%", convert.units = riley.units)
 ```
 
 # Supplement: Reconcile CIs of 2020 only with 2020 with other years
 
-In the first deer practical, we analysed the 2020 survey as if it existed in isolation.  The point estimate derived from that analysis, and from the analysis of all years combined did not differ greatly, but the precision (confidence intervals) of the two estimates was substantially different.  What is the reason for this?
+In the second deer practical, we analysed the 2020 survey as if it existed in isolation.  The point estimate derived from that analysis, and from the analysis of all years combined (we will discuss next week) did not differ greatly, but the precision (confidence intervals) of the two estimates was substantially different.  What is the reason for this?
 
-All boils down to truncation distance.  When truncating 5% of only the 2020 data, truncation distance is 309m and 65 detections are included in the analysis.  When 5% truncation is applied to the data pooled over all years, the truncation distance is shorter, 269m; with only 57 detections meeting that criterion.
+```{r table, echo=FALSE}
+output <- rbind(hnct$dht$ind$D, all.hr.pool$dht$individuals$D[14,])
+output$Label <- c("Analysed alone", "Analysed with pooled detection fn")
+kable(output, caption = "White-tailed deer estimates for 2020 analysed alone and analysed with other years.",
+      row.names = FALSE, digits=4) %>%
+  column_spec(6, background=spec_color(output$ucl, option="B", begin=.6, end=.9))
+```
+
+When truncating 5% of only the 2020 data, truncation distance is 309m and 65 detections are included in the analysis.  When 5% truncation is applied to the data pooled over all years, the truncation distance is shorter, 269m; with only 57 detections meeting that criterion.
+
+```{r hist20, fig.cap="Distribution of perpendicular distances for 2020 white-tail survey.  Vertical lines indicate truncation distances for solo (309m) and pooled (269m) analyses.", echo=FALSE}
+hist(unit.dat$distance, nc=40, xlab="Perpendicular distance", main="2020 white tail survey")
+abline(v=c(309, 269), lty=c(2,3))
+text(309, 3, "Solo analysis", pos=4)
+text(269, 4, "Pooled analysis", pos=4)
+```
 
 Confidence intervals in `Distance` are 
 
@@ -35,8 +88,36 @@ $$
 d f=\frac{[\operatorname{cv}(\hat{D})]^{4}}{\sum_{i=1}^{q} \frac{\left[\mathrm{cv}_{i}\right]^{4}}{d f_{i}}}=\frac{\left[\sum_{i=1}^{q}\left[\mathrm{cv}_{i}\right]^{2}\right]^{2}}{\sum_{i=1}^{q} \frac{\left[\mathrm{cv}_{i}\right]^{4}}{d f_{i}}}
 $$
 
-Pull apart the estimation from the model `hnct` fitted in Practical 2 with the model `all.hr.pool` fitted in Practical 3, focusing our attention on this Sattherthwaite calculation.
+For the white-tailed deer surveys where animals are detected in groups, there are three sources of uncertainty, hence three CVs that enter the calculation: uncertainty in $\hat{P_a}$, variability in encounter rate and uncertainty in average group size.
 
+Pull apart the estimation from the model `hnct` fitted in Practical 2 with the model `all.hr.pool` fitted in Practical 3, focusing our attention on this Sattherthwaite calculation; we compute the Sattherthwaite adjusted degrees of freedom for the two analyses.
+
+
+```{r ervar, eval=FALSE, echo=FALSE}
+unit.dat needs to be acquired from raw data
+eastpool <- unit.dat[unit.dat$Sample.Label=="2020FRE1" & unit.dat$distance <=269.293, "size"]
+westpool <- unit.dat[unit.dat$Sample.Label=="2020FRW1" & unit.dat$distance <=269.293, "size"]
+er.pool <- sum(c(eastpool, westpool))/30
+er.east <- sum(eastpool)/17
+er.west <- sum(westpool)/13
+se.er.pool <- sqrt(var(c(er.east, er.west)))
+cv.er.pool <- se.er.pool / er.pool
+
+
+eastalone <- unit.dat[unit.dat$Sample.Label=="2020FRE1" & unit.dat$distance <=308.9989, "size"]
+westalone <- unit.dat[unit.dat$Sample.Label=="2020FRW1" & unit.dat$distance <=308.9989, "size"]
+er.alone <- sum(c(eastalone, westalone))/30
+er.east.a <- sum(eastalone)/17
+er.west.a <- sum(westalone)/13
+se.er.alone <- sqrt(var(c(er.east.a, er.west.a)))
+cv.er.alone <- se.er.alone / er.alone
+```
+
+$CV(ER_{pooled})$ is 6.54X $CV(ER_{alone})$ causing the ratio of CV(ER) to be >> than CV(P_a) with the pooled analysis.  As a result, this situation described in Buckland et al. (2001:78) is in effect:
+
+> It makes an noticable difference in confidence intervals for small $k$, especially if the ratio of $CV(ER)/CV(P_a)$ is greater than 1.
+
+In the case of the pooled analysis, this ratio is nearly 10 (0.208/0.028)
 
 ```{r sattherthwaite}
 cv <- vector("numeric", 3)
@@ -68,8 +149,32 @@ outtable <- data.frame(df=c(df.dhat.only, df.dhat.just),
                        lcb=c(low.only, low.just),
                        ucb=c(high.only, high.just),
                        row.names = c("2020 analysed alone", "2020 with other years"))
-kable(outtable, digits=3, caption="Sattherthwaite degrees of freedom impact on confidence interval bounds")
+kable(outtable, digits=3, caption="Sattherthwaite degrees of freedom impact on confidence interval bounds") %>%
+  column_spec(2, bold=TRUE)
 ```
 
 
-The CV of encounter rate for the 2020 data with the more severe truncation (combined with other years) is almost triple the CV of encounter rate for the 2020 data treated alone.  The consequence of this is to make the Sattherthwaite degrees of freedom used in confidence interval calculations really small (1.4(pooled) vs 12.7(only 2020)).  This has the effect of ballooning the $t$-statistic with particularly dramatic consequences for the upper confidence bound.  Supporting calculations below.
+The CV of encounter rate for the 2020 data with the more severe truncation (combined with other years) is almost triple the CV of encounter rate for the 2020 data treated alone.  The consequence of this is to make the Sattherthwaite degrees of freedom used in confidence interval calculations small for the pooled analysis (`r round(outtable$df[2],2)`) in contrast to the degrees of freedom when 2020 is analysed alone (`r round(outtable$df[1],2)`).  This has the effect of ballooning the $t$-statistic (`r round(abs(qt(.025, df.dhat.just)),2)` for pooled analysis, compared to `r round(abs(qt(.025, df.dhat.only)),3)` for 2020 alone) with particularly dramatic consequences for the upper confidence bound.
+
+# In the end
+
+Using an absolute truncation distance rather than a relative (percentage) truncation might have solved the dilemma.
+
+```{r solve, echo=FALSE,  message=FALSE, error=FALSE, warning=FALSE}
+hnct300 <- ds(unit.dat, transect="line", key="hn", adjustment = "cos", 
+              convert.units = riley.units, truncation = 300)
+allpool300 <- ds(masterdeer, key="hr", adj="cos", truncation=300,
+                 convert.units = riley.units)
+output <- rbind(hnct300$dht$individuals$D, allpool300$dht$individuals$D[14,])
+output$Label <- c("Analysed alone", "Analysed with pooled detection fn")
+kable(output, 
+      caption = "White-tailed deer estimates for 2020 analysed alone and analysed with other years using common truncation distance of 300m.",
+      row.names = FALSE, digits=4) %>%
+    column_spec(6, background=spec_color(output$ucl, option="B", begin=.6, end=.9))
+```
+
+# The message
+
+With few spatial replicates, chance plays a much greater role in estimation.  An innocuous step in analysis (choosing "5%" truncation for both analyses) resulting in differing absolute truncation distances had a series of unintended consequences.  Because of the differing truncation distances there were different groups of deer detected on the two transects in 2020.  Those differences in the groups included in analysis resulted in different encounter rate variances.  Those encounter rate variance differences influenced the Sattherthwaite degrees of freedom computation.  The degrees of freedom difference (particularly the very small degrees of freedom for the pooled analysis) resulted in extreme differences in the upper confidence bound for the 2020 deer density estimate.
+
+The message to remember is that the small number of spatial replicates cause relatively insignificant differences (the meaning of "5%") to have **profound** consequences on the resulting estimates.  More robust estimation, less sensitive to small changes, requires increased levels of spatial replication.
